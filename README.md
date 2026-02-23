@@ -28,6 +28,36 @@ Once installed, type `/allium` to get started. Allium examines your project and 
 
 Jump to what [Allium looks like in practice](#what-this-looks-like-in-practice).
 
+## Working with agents
+
+A [rule](.claude/rules/allium.md) loads automatically whenever Claude Code works with `.allium` files. It provides syntax guidance, naming conventions and common pitfalls without needing to invoke the skill. This keeps routine spec reads and edits fast.
+
+Two specialised agents handle `.allium` files in a delegated context. They load the language reference into their own conversation, keeping Allium syntax out of your main session and freeing you to work on implementation in parallel.
+
+**[tend](.claude/agents/tend.md)** grows and shapes specifications. It translates new requirements into well-formed specs, challenges vague requests and won't let ambiguity through. It works on `.allium` files only.
+
+```
+"Tend: we need a cancellation policy for subscriptions
+ with a cooling-off period and prorated refunds"
+
+"Tend: add a circuit breaker entity to the infrastructure spec"
+
+"Tend: restructure the authentication spec, the rules have grown unwieldy"
+```
+
+**[weed](.claude/agents/weed.md)** finds where specifications and implementation have diverged. It reports mismatches and can update either side to match.
+
+```
+"Weed the auth spec against src/auth/"
+
+"Weed: update the spec to match what the payment code actually does"
+
+"Weed: the order spec says cancelled orders can't be refunded
+ but the code allows it. Fix the code."
+```
+
+Use `/allium` for interactive spec work, `elicit` to build specs through conversation, `distill` to extract specs from code, `tend` to grow specs as requirements evolve, `weed` to catch drift between spec and code.
+
 ## The problem with conversational context
 
 - Within a session, meaning drifts: by prompt ten or twenty, the model is pattern-matching on its own outputs rather than the original intent.
