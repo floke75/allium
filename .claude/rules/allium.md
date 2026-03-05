@@ -8,7 +8,7 @@ Allium is a behavioural specification language for describing what systems shoul
 
 ## File structure
 
-Every `.allium` file starts with `-- allium: N` where N is the current language version. Sections follow a fixed order: use declarations, given, external entities, value types, enumerations, entities and variants, config, defaults, rules, actor declarations, surfaces, deferred specifications, open questions. Omit empty sections. Section headers use comment dividers (`----`).
+Every `.allium` file starts with `-- allium: N` where N is the current language version. Sections follow a fixed order: use declarations, given, external entities, value types, contracts, enumerations, entities and variants, config, defaults, rules, invariants, actor declarations, surfaces, deferred specifications, open questions. Omit empty sections. Section headers use comment dividers (`----`).
 
 ## Syntax distinctions that trip up models
 
@@ -24,7 +24,15 @@ Every `.allium` file starts with `-- allium: N` where N is the current language 
 
 **`now` evaluation model** — In derived values, `now` re-evaluates on each read (volatile). In `ensures` clauses, `now` is bound to rule execution timestamp (snapshot). In temporal triggers, `now` is the evaluation timestamp with fire-once semantics.
 
-**Naming conventions** — PascalCase for entities, variants, rules, triggers, actors, surfaces. snake_case for fields, config parameters, derived values, enum literals.
+**Naming conventions** — PascalCase for entities, variants, rules, triggers, actors, surfaces, contract names, invariant names. snake_case for fields, config parameters, derived values, enum literals.
+
+**`contracts:` clause vs `exposes`/`provides`** — `exposes` and `provides` are colon-delimited clause lists (data visibility, available actions). `contracts:` uses `demands`/`fulfils` modifiers referencing module-level `contract` declarations (`contracts: demands Codec, fulfils EventSubmitter`). Contracts are always declared at module level with `contract Name { ... }`.
+
+**`@` annotation sigil** — The `@` prefix marks prose annotations: constructs whose structure (name, placement, uniqueness) the checker validates, but whose prose content it does not evaluate. Three annotation keywords exist: `@invariant` (named prose assertion in contracts), `@guidance` (non-normative advice in contracts, rules, surfaces) and `@guarantee` (named prose assertion in surfaces). `@guidance` must appear after all structural clauses and after all other annotations. When a prose annotation is promoted to an expression-bearing form, the `@` is dropped and a `{ expr }` body is added.
+
+**`@invariant` vs `invariant Name { }` vs `@guarantee`** — `@guarantee` is a surface-level prose assertion about the boundary as a whole. `@invariant` is a named prose assertion scoped to a contract. `invariant Name { expression }` (no `@`, braces) is an expression-bearing assertion at top-level or entity-level scope. They are distinct constructs. The `@` sigil marks prose annotations whose structure the checker validates but whose content it does not evaluate.
+
+**Contract contents** — Only typed signatures and `@`-prefixed annotations (`@invariant`, `@guidance`) are permitted inside contracts. Type declarations (entity, value, enum, variant) must be declared at module level and referenced by name.
 
 ## Anti-patterns
 

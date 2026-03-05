@@ -1,18 +1,10 @@
 # Tooling roadmap
 
-Allium has consistent syntax, naming conventions and validation rules, but nothing reads it except humans and LLMs. A parser changes that. Once a parser exists, deterministic tooling becomes possible: test generation, model checking, runtime validation, static analysis. The parser is the prerequisite for all of it.
+A Rust parser (`allium-tools/crates/allium-parser`) reads `.allium` files and produces a typed AST covering the full v2 language. The CLI outputs JSON, making it consumable by any downstream tool. The tree-sitter grammar in allium-tools serves editor syntax highlighting separately. The remaining items build on the parser.
 
-These five items are ordered by dependency and priority. The parser comes first because everything else builds on it.
+## 1. Structural validator
 
-## 1. Parser and structural validator
-
-The parser reads `.allium` files and produces a typed abstract syntax tree: entities with their fields, types, relationships, projections and derived values. Rules with their triggers, preconditions, postconditions and local bindings. Surfaces with their contracts. Actors, config blocks, defaults, module references, deferred specifications and open questions. Variants, value types and named enumerations. The full language.
-
-Other tools could import the parser as a library and work with the AST directly, or consume its output via a CLI. The right distribution model depends on the implementation language: a Rust parser is most useful as a CLI with structured output; a TypeScript parser is most useful as a library that other Node tools import.
-
-The language reference defines structural validation rules that the parser should enforce. Referenced entities and fields must exist. Relationships must include a backreference. Rules need at least one trigger and one ensures clause. Status values must be reachable, and non-terminal states must have exits. Derived values cannot be circular. Sum type discriminators must match their variant declarations. Inline enum fields cannot be compared across entities. Surface `provides` entries must correspond to defined triggers. Config references must resolve. The parser reports errors for violations and warnings for softer checks: unused entities, temporal rules without guards, overlapping preconditions.
-
-Implementation language: Rust. Hand-written recursive descent parser producing a typed AST covering the full language reference. Distributed as a native binary (homebrew, apt, GitHub releases) and as an MCP server for LLM tooling. The tree-sitter grammar in allium-tools continues to serve editor syntax highlighting separately. See `allium-tools/docs/project/parser-roadmap.md` for the detailed plan and tree-sitter grammar audit.
+The parser produces the AST; the structural validator enforces the language reference's validation rules against it. Referenced entities and fields must exist. Relationships must include a backreference. Rules need at least one trigger and one ensures clause. Status values must be reachable, and non-terminal states must have exits. Derived values cannot be circular. Sum type discriminators must match their variant declarations. Inline enum fields cannot be compared across entities. Surface `provides` entries must correspond to defined triggers. Config references must resolve. Errors for violations, warnings for softer checks: unused entities, temporal rules without guards, overlapping preconditions.
 
 ## 2. Property-based test generation
 
@@ -22,18 +14,9 @@ From the parsed AST, generate two things. Entity generators derived from field d
 
 The output must work across languages, whether through an intermediate representation that language-specific adapters consume or by generating test code directly for each target. Entity generators are useful beyond testing: staging environments, demos, seed data.
 
-This also motivates a language addition. Some properties span multiple rules: "account balance never goes negative", "no two interviews overlap for the same candidate." These are things domain experts state in conversation. They have no home in the current language. An `invariant` block would express them:
+Expression-bearing invariants (ALP-11) give the property test generator system-wide properties to check after sequences of rule applications. Top-level invariants assert properties over entity collections; entity-level invariants assert properties of individual instances. Both use the existing expression language with purity constraints (no side effects, no `now`). The `implies` operator and `for` quantification make most domain properties expressible directly.
 
-```
-invariant "account balance is non-negative" {
-    for account in Accounts:
-        account.balance >= 0
-}
-```
-
-Invariants use Allium's existing expression language. They enrich the specification for human readers regardless of tooling, and they give the property test generator system-wide properties to check after sequences of rule applications.
-
-Open questions: whether invariants should support temporal assertions or only state assertions, and how black box functions should be handled in generators.
+Open question: how black box functions should be handled in generators.
 
 ## 3. Runtime trace validation
 
@@ -59,8 +42,8 @@ Open questions: which translation target to pursue first, how to handle black bo
 
 The `guarantee` clause in surfaces is prose. It communicates intent but is unfalsifiable. For most specifications this is fine. For security boundaries, authorisation logic and financial calculations, a guarantee that points to external evidence is more convincing.
 
-The reference could live in the language (an optional `verified_by` clause on `guarantee`) or outside it (a sidecar file mapping guarantee names to artefact paths). Either way, the artefact could be another Allium spec that models the property in detail, a Cedar policy that proves authorisation correctness, or a Kani proof that verifies a Rust implementation. The weed agent checks that the referenced artefact covers the same entities, operations and actors as the Allium surface. Whether the proof actually proves the property is the proof tool's concern, not Allium's.
+The reference could live in the language (an optional `verified_by` clause on `@guarantee`) or outside it (a sidecar file mapping guarantee names to artefact paths). Either way, the artefact could be another Allium spec that models the property in detail, a Cedar policy that proves authorisation correctness, or a Kani proof that verifies a Rust implementation. The weed agent checks that the referenced artefact covers the same entities, operations and actors as the Allium surface. Whether the proof actually proves the property is the proof tool's concern, not Allium's.
 
-The Allium-to-Allium case is likely more useful than the external proof case. Most teams will never use Cedar or Lean. They might use a second Allium spec to model a property in enough detail to be convincing: `guarantee: AllSessionsExpire verified_by "./session-lifecycle.allium"`.
+The Allium-to-Allium case is likely more useful than the external proof case. Most teams will never use Cedar or Lean. They might use a second Allium spec to model a property in enough detail to be convincing: `@guarantee AllSessionsExpire verified_by "./session-lifecycle.allium"`.
 
 This is the lowest priority of the five. The syntax extension is small and the audience is narrow. Worth doing when a specific user needs it.

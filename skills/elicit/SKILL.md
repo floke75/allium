@@ -26,7 +26,7 @@ Before diving into details, establish what you are specifying. Not everything ne
 Capture scope at the start of every spec:
 
 ```
--- allium: 1
+-- allium: 2
 -- interview-scheduling.allium
 
 -- Scope: Interview scheduling for the hiring pipeline
@@ -209,6 +209,8 @@ Questions to ask:
 
 **Watch for:** Infinite loops ("then it retries, then retries again...", need terminal states). Missing escalation, because eventually a human needs to know.
 
+When stakeholders state system-wide properties ("balance never goes negative", "no two interviews overlap for the same candidate"), these are candidates for top-level invariants. Capture them as `invariant Name { expression }` declarations.
+
 ### Phase 4: Refinement
 
 **Goal:** Clean up the specification and identify gaps.
@@ -223,6 +225,8 @@ Questions to ask:
 **Technique:** Read back the spec and ask "does this match your mental model?"
 
 **Outputs:** Complete entity definitions. Open questions documented. Deferred specifications identified. External boundaries confirmed.
+
+When the same obligation pattern (e.g. a serialisation contract, a deterministic evaluation requirement) appears across multiple surfaces, suggest extracting it as a `contract` declaration for reuse.
 
 ## Elicitation principles
 
@@ -262,7 +266,7 @@ Better to record an open question than assume.
 "I'm not sure whether declining should return the candidate to the pool or remove them entirely. Let me note that as an open question."
 
 ```
-open_question "When candidate declines, do they return to pool or exit?"
+open question "When candidate declines, do they return to pool or exit?"
 ```
 
 ### Use concrete examples

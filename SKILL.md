@@ -1,7 +1,7 @@
 ---
 name: allium
 description: An LLM-native language for sharpening intent alongside implementation. Velocity through clarity.
-version: 1
+version: 2
 auto_trigger:
   - file_patterns: ["**/*.allium"]
   - keywords: ["allium", "allium spec", "allium specification", ".allium file"]
@@ -25,11 +25,13 @@ Allium does NOT specify programming language or framework choices, database sche
 
 ## Routing table
 
-| Task | Skill | When |
-|------|-------|------|
+| Task | Tool | When |
+|------|------|------|
 | Writing or reading `.allium` files | this skill | You need language syntax and structure |
-| Building a spec through conversation | `elicit` | User describes a feature or behaviour they want to build |
-| Extracting a spec from existing code | `distill` | User has implementation code and wants a spec from it |
+| Building a spec through conversation | `elicit` skill | User describes a feature or behaviour they want to build |
+| Extracting a spec from existing code | `distill` skill | User has implementation code and wants a spec from it |
+| Modifying an existing spec | `tend` agent | User wants targeted changes to `.allium` files |
+| Checking spec-to-code alignment | `weed` agent | User wants to find or fix divergences between spec and implementation |
 
 ## Quick syntax summary
 
@@ -115,6 +117,8 @@ rule InvitationExpires {
     ensures:
         for s in remaining:
             s.status = cancelled
+    @guidance
+        -- Non-normative implementation advice.
 }
 ```
 
@@ -180,7 +184,7 @@ surface InterviewerDashboard {
 }
 ```
 
-Surfaces define contracts at boundaries. The `facing` clause names the external party, `context` scopes the entity. The remaining clauses use a single vocabulary regardless of whether the boundary is user-facing or code-to-code: `exposes` (visible data, supports `for` iteration over collections), `provides` (available operations with optional when-guards), `guarantee` (constraints that must hold), `guidance` (non-normative advice), `related` (associated surfaces reachable from this one), `timeout` (references to temporal rules that apply within the surface's context).
+Surfaces define contracts at boundaries. The `facing` clause names the external party, `context` scopes the entity. The remaining clauses use a single vocabulary regardless of whether the boundary is user-facing or code-to-code: `exposes` (visible data, supports `for` iteration over collections), `provides` (available operations with optional when-guards), `contracts:` (references module-level `contract` declarations with `demands`/`fulfils` direction markers), `@guarantee` (named prose assertions about the boundary), `@guidance` (non-normative advice), `related` (associated surfaces reachable from this one), `timeout` (references to temporal rules that apply within the surface's context).
 
 The `facing` clause accepts either an actor type (with a corresponding `actor` declaration and `identified_by` mapping) or an entity type directly. Use actor declarations when the boundary has specific identity requirements; use entity types when any instance can interact (e.g., `facing visitor: User`). For integration surfaces where the external party is code, declare an actor type with a minimal `identified_by` expression. Actors that reference `within` in their `identified_by` expression must declare the expected context type: `within: Workspace`.
 
@@ -188,9 +192,24 @@ The `facing` clause accepts either an actor type (with a corresponding `actor` d
 
 The `exposes` block is the field-level contract: the implementation returns exactly these fields, the consumer uses exactly these fields. Do not add fields not listed. Do not omit fields that are listed.
 
+### Contract
+
+```allium
+contract Codec {
+    serialize: (value: Any) -> ByteArray
+    deserialize: (bytes: ByteArray) -> Any
+
+    @invariant Roundtrip
+        -- deserialize(serialize(value)) produces a value
+        -- equivalent to the original for all supported types.
+}
+```
+
+Contracts are module-level declarations referenced by name in surface `contracts:` clauses (`demands Codec`, `fulfils EventSubmitter`). See [Contracts](./references/language-reference.md#contracts) for declaration syntax and referencing rules.
+
 ### Expressions
 
-Navigation: `interview.candidacy.candidate.email`, `reply_to?.author` (optional), `timezone ?? "UTC"` (null coalescing). Collections: `slots.count`, `slot in invitation.slots`, `interviewers.any(i => i.can_solo)`, `for item in collection: item.status = cancelled`, `permissions + inherited` (set union), `old - new` (set difference). Comparisons: `status = pending`, `count >= 2`, `status in {confirmed, declined}`, `provider not in providers`. Boolean logic: `a and b`, `a or b`, `not a`.
+Navigation: `interview.candidacy.candidate.email`, `reply_to?.author` (optional), `timezone ?? "UTC"` (null coalescing). Collections: `slots.count`, `slot in invitation.slots`, `interviewers.any(i => i.can_solo)`, `for item in collection: item.status = cancelled`, `permissions + inherited` (set union), `old - new` (set difference). Comparisons: `status = pending`, `count >= 2`, `status in {confirmed, declined}`, `provider not in providers`. Boolean logic: `a and b`, `a or b`, `not a`, `a implies b`.
 
 ### Modular specs
 
@@ -206,6 +225,8 @@ Qualified names reference entities across specs: `oauth/Session`. Coordinates ar
 config {
     invitation_expiry: Duration = 7.days
     max_login_attempts: Integer = 5
+    extended_expiry: Duration = invitation_expiry * 2              -- expression-form default
+    sync_timeout: Duration = core/config.default_timeout           -- config parameter reference
 }
 ```
 
@@ -216,6 +237,17 @@ Rules reference config values as `config.invitation_expiry`. For default entity 
 ```
 default Role viewer = { name: "viewer", permissions: { "documents.read" } }
 ```
+
+### Invariant
+
+```allium
+invariant NonNegativeBalance {
+    for account in Accounts:
+        account.balance >= 0
+}
+```
+
+Expression-bearing invariants (`invariant Name { expression }`) assert properties over entity state. They are logical assertions, not runtime checks. Distinct from prose annotations (`@invariant Name`) in contracts, which use the `@` sigil to mark content the checker does not evaluate. See [Invariants](./references/language-reference.md#invariants).
 
 ### Deferred specs
 
@@ -235,6 +267,6 @@ When the `allium` CLI is installed, a hook validates `.allium` files automatical
 
 ## References
 
-- [Language reference](./references/language-reference.md) — full syntax for entities, rules, expressions, surfaces and validation
+- [Language reference](./references/language-reference.md) — full syntax for entities, rules, expressions, surfaces, contracts, invariants and validation
 - [Test generation](./references/test-generation.md) — generating tests from specifications
-- [Patterns](./references/patterns.md) — 8 worked patterns: auth, RBAC, invitations, soft delete, notifications, usage limits, comments, library spec integration
+- [Patterns](./references/patterns.md) — 9 worked patterns: auth, RBAC, invitations, soft delete, notifications, usage limits, comments, library spec integration, framework integration contract

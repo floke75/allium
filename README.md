@@ -134,7 +134,7 @@ entity CircuitBreaker {
     status: closed | open | half_open
     opened_at: Timestamp?
     failures: Failure with circuit_breaker = this
-    recent_failures: failures with occurred_at > now - config.failure_window
+    recent_failures: failures where occurred_at > now - config.failure_window
     failure_rate: recent_failures.count / config.window_sample_size
     is_tripped: failure_rate >= config.failure_threshold
 }
@@ -187,7 +187,7 @@ rule IncidentEscalates {
 }
 ```
 
-The [language reference](references/language-reference.md) covers entities, rules, triggers, relationships, projections, derived values, surfaces and actor declarations.
+The [language reference](references/language-reference.md) covers entities, rules, triggers, relationships, projections, derived values, surfaces and actor declarations. The [v1 to v2 migration guide](references/migration-v1-to-v2.md) covers what changed and how to upgrade existing specs.
 
 ### A language without a runtime
 

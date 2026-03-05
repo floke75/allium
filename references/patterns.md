@@ -13,7 +13,8 @@ Patterns elide common cross-cutting entities (`Email`, `Notification`, `AuditLog
 | Notification Preferences | Sum types for notification variants, user preferences, digest batching, surfaces |
 | Usage Limits & Quotas | Limit checks in `requires`, metered resources, plan tiers, surfaces |
 | Comments with Mentions | Nested entities, parsing triggers, cross-entity notifications, surfaces |
-| Integrating Library Specs | External spec references, configuration, responding to external triggers |
+| Integrating Library Specs | External spec references, configuration, config parameter references, responding to external triggers |
+| Framework Integration Contract | Contract declarations, expression-bearing invariants, contract references, programmatic surfaces |
 
 ---
 
@@ -24,6 +25,7 @@ Patterns elide common cross-cutting entities (`Email`, `Notification`, `AuditLog
 This pattern handles user registration, login and password reset: the foundation of most SaaS applications.
 
 ```
+-- allium: 2
 -- password-auth.allium
 
 config {
@@ -267,10 +269,10 @@ surface Authentication {
         UserRegisters(email, password)
         UserRequestsPasswordReset(email)
 
-    guarantee: NoSessionRequired
+    @guarantee NoSessionRequired
         -- Accessible without an existing session.
 
-    guidance:
+    @guidance
         -- Show lockout status and unlock time when user.is_locked.
         -- Validate password length client-side before submission.
 }
@@ -288,7 +290,7 @@ surface PasswordReset {
         UserResetsPassword(token, new_password)
             when token.is_valid
 
-    guarantee: NoSessionRequired
+    @guarantee NoSessionRequired
         -- Accessible without an existing session.
 }
 
@@ -327,6 +329,7 @@ surface AccountManagement {
 This pattern implements hierarchical roles where higher roles inherit permissions from lower ones.
 
 ```
+-- allium: 2
 -- rbac.allium
 
 ------------------------------------------------------------
@@ -582,7 +585,7 @@ surface WorkspaceMemberManagement {
         RemoveMemberFromWorkspace(admin, workspace, target_user)
             when target_user != workspace.owner
 
-    guarantee: OwnerProtection
+    @guarantee OwnerProtection
         -- The workspace owner's role cannot be changed or removed.
 }
 
@@ -630,11 +633,18 @@ surface WorkspaceDocuments {
 This pattern handles inviting users to collaborate on resources, whether they're existing users or not.
 
 ```
+-- allium: 2
 -- resource-invitation.allium
 
 config {
     invitation_expiry: Duration = 7.days
 }
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum Permission { view | edit | admin }
 
 ------------------------------------------------------------
 -- Entities
@@ -656,7 +666,7 @@ entity Resource {
 entity ResourceShare {
     resource: Resource
     user: User
-    permission: view | edit | admin
+    permission: Permission
     status: active | revoked
     created_at: Timestamp
 
@@ -670,7 +680,7 @@ entity ResourceShare {
 entity ResourceInvitation {
     resource: Resource
     email: String
-    permission: view | edit | admin
+    permission: Permission
     invited_by: User
     created_at: Timestamp
     expires_at: Timestamp
@@ -865,7 +875,7 @@ surface ResourceSharing {
             RevokeShare(sharer, s)
                 when sharer = resource.owner or share.can_admin
 
-    guarantee: OwnerCannotBeRevoked
+    @guarantee OwnerCannotBeRevoked
         -- The resource owner's access cannot be revoked or downgraded.
 }
 
@@ -890,6 +900,7 @@ surface InvitationResponse {
 ```
 
 **Key language features shown:**
+- Named enum (`Permission`) shared across `ResourceShare` and `ResourceInvitation`
 - Complex permission logic in `requires`
 - Distinct trigger names for different parameter shapes (`ExistingUserAcceptsInvitation` vs `NewUserAcceptsInvitation`)
 - Invitation lifecycle (pending → accepted/declined/expired/revoked)
@@ -907,6 +918,7 @@ surface InvitationResponse {
 This pattern implements soft delete where items appear deleted but can be restored within a retention period.
 
 ```
+-- allium: 2
 -- soft-delete.allium
 
 config {
@@ -1044,7 +1056,20 @@ rule RestoreAll {
 This pattern handles in-app notifications with user-controlled email preferences and digest batching. It uses sum types to model different notification kinds, each carrying its own contextual data rather than pre-computed strings.
 
 ```
+-- allium: 2
 -- notifications.allium
+-- Elided types: Comment, Resource, Task, Permission, DayOfWeek
+-- (defined in other patterns or your domain spec)
+
+config {
+    digest_window: Duration = 24.hours
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum EmailFrequency { immediately | daily_digest | never }
 
 ------------------------------------------------------------
 -- Entities
@@ -1062,17 +1087,17 @@ entity User {
     -- Projections
     unread_notifications: notifications where status = unread
     pending_email_notifications: notifications where email_status = pending
-    recent_pending_notifications: notifications where email_status = pending and created_at >= now - 24.hours
+    recent_pending_notifications: notifications where email_status = pending and created_at >= now - config.digest_window
 }
 
 entity NotificationSetting {
     user: User
 
     -- Per-type email preferences
-    email_on_mention: immediately | daily_digest | never
-    email_on_comment: immediately | daily_digest | never
-    email_on_share: immediately | daily_digest | never
-    email_on_assignment: immediately | daily_digest | never
+    email_on_mention: EmailFrequency
+    email_on_comment: EmailFrequency
+    email_on_share: EmailFrequency
+    email_on_assignment: EmailFrequency
 
     -- Global settings
     digest_enabled: Boolean
@@ -1113,7 +1138,7 @@ variant ReplyNotification : Notification {
 variant ShareNotification : Notification {
     resource: Resource
     shared_by: User
-    permission: view | edit | admin
+    permission: Permission
 }
 
 -- Someone assigned a task to the user
@@ -1391,6 +1416,7 @@ surface NotificationPreferences {
 - **Variant declarations**: Each notification kind uses `variant X : Notification` syntax
 - **Variant-specific creation rules**: Each variant has its own creation rule with appropriate fields
 - **Exhaustive kind checking**: `SendImmediateEmail` handles all variants explicitly
+- Named enum (`EmailFrequency`) shared across preference fields
 - User preferences stored as entity
 - Temporal trigger for per-user digest scheduling (`when: user: User.next_digest_at <= now`)
 - Digest batching with temporal trigger
@@ -1431,7 +1457,9 @@ This is better because:
 This pattern handles SaaS usage limits: different plans have different quotas, and usage is tracked and enforced.
 
 ```
+-- allium: 2
 -- usage-limits.allium
+-- Elided types: Feature (define as enum in your spec)
 
 ------------------------------------------------------------
 -- Entities
@@ -1623,17 +1651,17 @@ rule ApiRateLimitExceeded {
 
     requires: usage.is_over_api_quota
 
-    ensures: ApiResponse.created(
-        status: 429,
-        body: {
-            error: "rate_limit_exceeded",
-            resets_at: usage.next_reset_at
-        }
+    ensures: ApiRequestRejected(
+        workspace: workspace,
+        reason: rate_limit_exceeded,
+        data: { resets_at: usage.next_reset_at }
     )
 }
 
 rule ResetDailyApiUsage {
     when: usage: WorkspaceUsage.next_reset_at <= now
+
+    requires: usage.api_requests_today > 0    -- prevents re-firing when already reset
 
     ensures: usage.api_requests_today = 0
     ensures: usage.next_reset_at = usage.next_reset_at + 1.day
@@ -1739,7 +1767,7 @@ surface UsageDashboard {
         UpgradePlan(workspace, new_plan)
         DowngradePlan(workspace, new_plan)
 
-    guidance:
+    @guidance
         -- Show progress bars for usage against limits.
         -- Highlight when any resource is above 80% of its limit.
 }
@@ -1755,7 +1783,7 @@ surface APIAccess {
         ApiRequestReceived(consumer, endpoint)
             when not consumer.usage.is_over_api_quota
 
-    guarantee: RateLimitEnforcement
+    @guarantee RateLimitEnforcement
         -- Requests beyond the daily limit receive HTTP 429 with
         -- reset time.
 }
@@ -1781,6 +1809,7 @@ surface APIAccess {
 This pattern implements comments with @mentions, including mention parsing and notification generation.
 
 ```
+-- allium: 2
 -- comments.allium
 
 ------------------------------------------------------------
@@ -1944,16 +1973,18 @@ rule EditComment {
     ensures: comment.edited_at = now
 
     -- Remove old mentions that are no longer present
-    ensures: for user in removed_mentions:
-        not exists CommentMention{comment, user}
+    ensures:
+        for user in removed_mentions:
+            not exists CommentMention{comment, user}
 
     -- Add new mentions
-    ensures: for user in added_mentions:
-        CommentMention.created(
-            comment: comment,
-            user: user,
-            notified: false
-        )
+    ensures:
+        for user in added_mentions:
+            CommentMention.created(
+                comment: comment,
+                user: user,
+                notified: false
+            )
 }
 
 ------------------------------------------------------------
@@ -2051,7 +2082,7 @@ surface CommentThread {
             RemoveReaction(viewer, comment, emoji)
                 when exists CommentReaction{comment: comment, user: viewer, emoji: emoji}
 
-    guidance:
+    @guidance
         -- Show "edited" indicator when comment.is_edited.
         -- Show "deleted comment" placeholder for deleted replies
         -- rather than removing them from the thread.
@@ -2075,15 +2106,16 @@ surface CommentThread {
 
 ## Pattern 8: Integrating Library Specs
 
-**Demonstrates:** External spec references with coordinates, configuration blocks, responding to external triggers, using external entities
+**Demonstrates:** External spec references with coordinates, configuration blocks, config parameter references, responding to external triggers, using external entities
 
-Library specs are standalone specifications for common functionality - authentication providers, payment processors, email services, etc. They define a contract that implementations must satisfy, and your application spec composes them in.
+Library specs are standalone specifications for common functionality: authentication providers, payment processors, email services. They define a contract that implementations must satisfy, and your application spec composes them in. Consuming specs can reference a library spec's config values as defaults for their own parameters, avoiding duplication when the values should track each other.
 
 ### Example: OAuth Authentication
 
 This example shows integrating a library OAuth spec into your application. The OAuth spec handles the authentication flow; your application responds to authentication events and manages application-level user state.
 
 ```
+-- allium: 2
 -- app-auth.allium
 
 ------------------------------------------------------------
@@ -2275,6 +2307,7 @@ rule UnlinkProvider {
 This example shows integrating a payment processor spec for subscription billing.
 
 ```
+-- allium: 2
 -- billing.allium
 
 ------------------------------------------------------------
@@ -2288,6 +2321,12 @@ stripe/config {
     tax_calculation: automatic
     proration: create_prorations
     trial_period: 14.days
+}
+
+config {
+    trial_period: Duration = stripe/config.trial_period
+    extended_trial: Duration = stripe/config.trial_period * 2
+    trial_reminder_lead: Duration = 3.days
 }
 
 ------------------------------------------------------------
@@ -2381,7 +2420,7 @@ rule HandlePaymentFailure {
 
 -- When trial is ending, remind user
 rule TrialEndingReminder {
-    when: sub: Subscription.trial_ends_at - 3.days <= now
+    when: sub: Subscription.trial_ends_at - config.trial_reminder_lead <= now
 
     requires: sub.status = trialing
     requires: not sub.trial_reminder_sent
@@ -2393,7 +2432,7 @@ rule TrialEndingReminder {
         to: org.owner.email,
         template: trial_ending,
         data: {
-            days_remaining: 3,
+            days_remaining: config.trial_reminder_lead,
             plan: sub.plan,
             has_payment_method: org.has_payment_method
         }
@@ -2479,6 +2518,8 @@ rule CancelSubscription {
 **Key language features shown:**
 - External spec references with immutable coordinates (`use "github.com/.../abc123" as alias`)
 - Configuration blocks for external specs (`oauth/config { ... }`)
+- Config parameter references as defaults (`trial_period: Duration = stripe/config.trial_period`)
+- Expression-form defaults derived from library config (`extended_trial: Duration = stripe/config.trial_period * 2`)
 - Responding to external triggers (`when: oauth/AuthenticationSucceeded(...)`)
 - Trigger emissions for cross-pattern notification (`UserInformed(...)`)
 - Responding to external state transitions (`when: session: oauth/Session.status transitions_to expiring`)
@@ -2496,6 +2537,356 @@ When creating or choosing library specs:
 3. **Observable triggers**: Library specs should emit triggers for all significant events so consuming specs can respond
 4. **Minimal coupling**: Library specs shouldn't depend on your application entities - the linkage goes one way
 5. **Clear boundaries**: The library spec handles its domain (OAuth flow, payment processing); your spec handles application concerns (user creation, access control)
+
+---
+
+## Pattern 9: Framework Integration Contract
+
+**Demonstrates:** Contract declarations, expression-bearing invariants, `contracts:` clause with `demands`/`fulfils`, programmatic surfaces, typed signatures
+
+This pattern specifies the contract between an event-sourcing framework and its domain modules. The framework demands that each module supply a deterministic evaluation function; in return, the surface fulfils event submission and state snapshot services. Unlike user-facing surfaces that use `exposes` and `provides`, framework-to-module boundaries use a `contracts:` clause with `demands` and `fulfils` to describe programmatic obligations. Contracts are declared at module level so they can be reused across surfaces or referenced from other specs.
+
+```
+-- allium: 2
+-- event-sourcing-integration.allium
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value EntityKey {
+    kind: String
+    id: String
+}
+
+value EventOutcome {
+    entity_key: EntityKey
+    new_state: ByteArray
+    side_effects: List<SideEffect>
+}
+
+value SideEffect {
+    kind: emit_event | schedule_timeout | request_snapshot
+    payload: ByteArray
+}
+
+value SnapshotRequest {
+    entity_key: EntityKey
+    as_of: Timestamp
+}
+
+value Snapshot {
+    entity_key: EntityKey
+    state: ByteArray
+    version: Integer
+    taken_at: Timestamp
+}
+
+------------------------------------------------------------
+-- Contracts
+------------------------------------------------------------
+
+contract DeterministicEvaluation {
+    evaluate: (event_name: String, payload: ByteArray, current_state: ByteArray) -> EventOutcome
+
+    @invariant Determinism
+        -- For identical inputs (event_name, payload, current_state),
+        -- evaluate must produce byte-identical EventOutcome values
+        -- across all instances and invocations.
+
+    @invariant Purity
+        -- evaluate must not perform I/O, read the system clock,
+        -- access mutable state outside its arguments, or depend
+        -- on the order of previous invocations.
+
+    @invariant TotalFunction
+        -- evaluate must return a valid EventOutcome for every
+        -- combination of registered event_name, well-formed payload
+        -- and current_state. It must not throw or fail to terminate.
+
+    @guidance
+        -- Implementations should avoid allocating during evaluation
+        -- where possible, as the framework may invoke evaluate
+        -- at high frequency during replay.
+}
+
+contract EventSubmitter {
+    submit: (idempotency_key: String, event_name: String, payload: ByteArray) -> EventSubmission
+
+    @invariant AtMostOnceProcessing
+        -- Within the submission TTL window (config.submission_ttl),
+        -- a given idempotency key is accepted at most once.
+        -- Duplicate submissions are rejected.
+
+    @invariant OrderPreservation
+        -- Events submitted by a single module are processed in
+        -- submission order. No ordering guarantee exists across
+        -- modules.
+}
+
+contract StateSnapshots {
+    request_snapshot: (entity_key: EntityKey) -> Snapshot
+    get_snapshot: (request: SnapshotRequest) -> Snapshot?
+
+    @invariant SnapshotConsistency
+        -- A snapshot reflects the state after applying all events
+        -- up to and including the snapshot's version number.
+        -- No partial application.
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity DomainModule {
+    name: String
+    version: String
+    status: registered | active | suspended
+
+    -- Relationships
+    event_types: EventTypeRegistration with module = this
+
+    -- Projections
+    active_event_types: event_types where status = active
+}
+
+entity EventTypeRegistration {
+    module: DomainModule
+    event_name: String
+    schema_hash: String
+    status: active | deprecated
+    registered_at: Timestamp
+}
+
+entity EventSubmission {
+    module: DomainModule
+    idempotency_key: String
+    event_name: String
+    payload: ByteArray
+    status: pending | accepted
+    submitted_at: Timestamp
+    processed_at: Timestamp?
+
+    invariant PayloadWithinLimit { length(payload) <= config.max_payload_bytes }
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    submission_ttl: Duration = 24.hours
+    max_payload_bytes: Integer = 1_000_000
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule RegisterModule {
+    when: RegisterModule(module_name, version, event_types)
+
+    requires: not exists DomainModule{name: module_name}
+
+    ensures:
+        let module = DomainModule.created(
+            name: module_name,
+            version: version,
+            status: registered
+        )
+        for event_name in event_types:
+            EventTypeRegistration.created(
+                module: module,
+                event_name: event_name,
+                schema_hash: hash(event_name + version),
+                status: active,
+                registered_at: now
+            )
+}
+
+rule ActivateModule {
+    when: module: DomainModule.status becomes registered
+
+    requires: module.event_types.count > 0
+
+    ensures: module.status = active
+}
+
+rule SubmitEvent {
+    when: SubmitEvent(module, idempotency_key, event_name, payload)
+
+    let existing = EventSubmission{module: module, idempotency_key: idempotency_key}
+
+    requires: module.status = active
+    requires: not exists existing
+    requires: exists EventTypeRegistration{module: module, event_name: event_name, status: active}
+    requires: length(payload) <= config.max_payload_bytes
+
+    ensures: EventSubmission.created(
+        module: module,
+        idempotency_key: idempotency_key,
+        event_name: event_name,
+        payload: payload,
+        status: pending,
+        submitted_at: now
+    )
+}
+
+rule ProcessSubmission {
+    when: submission: EventSubmission.status becomes pending
+
+    ensures: submission.status = accepted
+    ensures: submission.processed_at = now
+}
+
+rule ExpireOldSubmissions {
+    when: submission: EventSubmission.submitted_at + config.submission_ttl <= now
+
+    requires: submission.status in {pending, accepted}
+
+    ensures: not exists submission
+}
+
+rule DeprecateEventType {
+    when: DeprecateEventType(module, event_name)
+
+    let registration = EventTypeRegistration{module: module, event_name: event_name}
+
+    requires: exists registration
+    requires: registration.status = active
+
+    ensures: registration.status = deprecated
+}
+
+rule SuspendModule {
+    when: SuspendModule(admin, module, reason)
+
+    requires: module.status = active
+
+    ensures: module.status = suspended
+    ensures: AuditLog.created(
+        event: module_suspended,
+        timestamp: now,
+        metadata: { module: module.name, reason: reason, by: admin }
+    )
+}
+
+rule ReactivateModule {
+    when: ReactivateModule(admin, module)
+
+    requires: module.status = suspended
+    requires: module.event_types.count > 0
+
+    ensures: module.status = active
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor FrameworkRuntime {
+    identified_by: DomainModule where status = active
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+-- User-facing surface for module administration
+surface ModuleAdministration {
+    facing admin: User
+
+    exposes:
+        for module in DomainModules:
+            module.name
+            module.version
+            module.status
+            module.active_event_types.count
+
+    provides:
+        RegisterModule(module_name, version, event_types)
+        for module in DomainModules where status = active:
+            SuspendModule(admin, module, reason)
+            for registration in module.active_event_types:
+                DeprecateEventType(module, registration.event_name)
+        for module in DomainModules where status = suspended:
+            ReactivateModule(admin, module)
+}
+
+-- Programmatic surface: the framework-to-module integration contract
+surface EventSourcingIntegration {
+    facing runtime: FrameworkRuntime
+
+    context module: DomainModule where status = active
+
+    contracts:
+        demands DeterministicEvaluation
+        fulfils EventSubmitter
+        fulfils StateSnapshots
+
+    @guarantee ModuleBoundaryIsolation
+        -- Events and state from one module are never visible to
+        -- another module's evaluate function. Cross-module
+        -- communication happens only through side effects processed
+        -- by the framework.
+}
+```
+
+**Key language features shown:**
+- `contract` declarations at module level for reuse across surfaces
+- Surface `contracts:` clause with `demands`/`fulfils` direction markers (`demands DeterministicEvaluation`, `fulfils EventSubmitter`) without repeating signatures or invariants
+- Expression-bearing `invariant Name { expression }` on entities (`PayloadWithinLimit` on `EventSubmission`)
+- Prose-only `@invariant Name` inside contracts for properties that cannot be expressed as a single boolean expression
+- `@guarantee Name` at surface level, distinct from contract-scoped invariants (boundary-wide vs contract-scoped assertions)
+- `@guidance` inside a contract for non-normative implementation advice
+- Mixed surface: `ModuleAdministration` uses traditional `exposes`/`provides` for human actors; `EventSourcingIntegration` uses `contracts:` clause for programmatic integration
+- Actor declaration for a code-level party (`FrameworkRuntime` identified by an active module)
+
+### When to use contracts
+
+Use `contract` declarations when the boundary is between code and code rather than between a user and an application. All contracts are declared at module level and referenced in surfaces via a `contracts:` clause with `demands`/`fulfils` direction markers. Common scenarios:
+
+- **Framework-to-plugin contracts**: the framework demands evaluation logic, fulfils lifecycle services
+- **Service-to-adapter boundaries**: the service demands a storage adapter, fulfils a query interface
+- **Cross-context integration**: one bounded context demands event handlers, fulfils event streams
+- **SDK contracts**: the SDK demands configuration and callbacks, fulfils client operations
+
+Do not use contracts for user-facing surfaces. If the external party is a person interacting through a UI, use `exposes` (what they see) and `provides` (what actions they can take). Contracts describe what code must implement, not what users can do.
+
+### Contracts vs provides
+
+`provides:` lists actions that an actor can invoke, each corresponding to a rule's external stimulus trigger. `fulfils ContractName` in a `contracts:` clause declares a set of typed operations that the surface owner supplies to the counterpart as an API. The distinction:
+
+- `provides: SubmitEvent(module, key, name, payload)` — an action the actor triggers; a rule fires in response
+- `fulfils EventSubmitter` — a typed operation set the surface makes available, defined in a `contract` declaration; the implementation is the surface owner's responsibility
+
+Both describe things the surface supplies, but `provides` connects to the rule system while `fulfils` references a programmatic contract with typed signatures and invariants.
+
+### Invariant vs guarantee
+
+`@guarantee` asserts a property of the surface boundary as a whole. `invariant` asserts a property scoped to the operations within a specific contract.
+
+Invariants come in two forms. Expression-bearing invariants carry a boolean expression that can be checked mechanically. Prose invariants describe properties that require human or LLM judgement.
+
+```
+-- Expression-bearing invariant on an entity
+entity EventSubmission {
+    ...
+    invariant PayloadWithinLimit { length(payload) <= config.max_payload_bytes }
+}
+
+-- Prose invariant inside a contract
+contract DeterministicEvaluation {
+    @invariant Purity
+        -- evaluate must not perform I/O or access mutable state.
+}
+
+-- Surface-level guarantee: applies across the entire boundary
+@guarantee ModuleBoundaryIsolation
+    -- Events from one module are never visible to another module.
+```
+
+Use `@guarantee` for cross-cutting properties that span the whole surface. Use `invariant` for properties tied to specific operations within a contract, or for entity-level assertions.
 
 ---
 
